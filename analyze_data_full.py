@@ -2,9 +2,9 @@ import pandas as pd
 
 
 EXAMS = [
-    {"key": "seven_up_monthly", "name": "七上第一次月考", "file": "diyiciyuekao.xlsx"},
     {"key": "seven_up_midterm", "name": "七上期中", "file": "qizhognchengji.xlsx"},
     {"key": "seven_down_midterm", "name": "七下期中", "file": "2026年七下期中考试排行榜.xlsx"},
+    {"key": "eight_up_midterm", "name": "八上期中", "file": "康一中北八上期中排行榜.xlsx"},
 ]
 
 META_MAP = {

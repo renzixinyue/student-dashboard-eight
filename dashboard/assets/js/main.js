@@ -76,15 +76,23 @@ function renderScoreDistributionChart(data) {
 function renderSubjectRadarChart(data) {
     const chart = echarts.init(document.getElementById('subjectAvgChart'));
     chartInstances.subjectAvgChart = chart;
+    const coverage = getSubjectCoverage(data.exams, data.subject_stats);
     const grouped = {};
     data.subject_stats.forEach(item => {
         if (!grouped[item.subject]) grouped[item.subject] = {};
         grouped[item.subject][item.exam_key] = item.avg_score;
     });
 
-    const subjects = getOrderedSubjectNames(Object.keys(grouped));
+    const allSubjects = Object.keys(grouped);
+    // 只有多次考试共同出现的科目才参与平均分对比
+    const subjects = getOrderedSubjectNames(allSubjects.filter(name => !isExclusiveSubject(coverage[name])));
+    const exclusiveSubjects = getOrderedSubjectNames(allSubjects.filter(name => isExclusiveSubject(coverage[name])));
+    setChartNote('subjectAvgNote', exclusiveSubjects, coverage, '仅在单次考试出现，不参与平均分对比');
+
     const maxScore = Math.max(
-        ...data.subject_stats.map(item => Number(item.avg_score) || 0),
+        ...data.subject_stats
+            .filter(item => subjects.includes(item.subject))
+            .map(item => Number(item.avg_score) || 0),
         100
     );
 
@@ -274,8 +282,21 @@ function renderStudentSubjectChart(student, windowInfo) {
     let chart = echarts.getInstanceByDom(chartDom);
     if (chart) chart.dispose();
     chart = echarts.init(chartDom);
-    const orderedSubjects = getOrderedStudentSubjects(student);
-    const categories = ['总分', ...orderedSubjects.map(item => item.name)];
+
+    const coverage = getSubjectCoverage(appData.exams, appData.subject_stats);
+    const allSubjects = getOrderedStudentSubjects(student);
+    // 可对比科目：多次考试都出现；单列科目：本次新增或合并的科目（只显示排名，不做升降）
+    const comparableSubjects = allSubjects.filter(item => !isExclusiveSubject(coverage[item.name]));
+    const exclusiveSubjects = allSubjects.filter(item => isExclusiveSubject(coverage[item.name]));
+    const orderedSubjects = [...comparableSubjects, ...exclusiveSubjects];
+
+    const categories = [
+        '总分',
+        ...comparableSubjects.map(item => item.name),
+        ...exclusiveSubjects.map(item => `${item.name}\n(${coverage[item.name].examName}${coverage[item.name].tag})`)
+    ];
+    setChartNote('studentSubjectNote', exclusiveSubjects.map(item => item.name), coverage, '单列显示，仅比较排名，不做升降对比');
+
     const series = appData.exams.map((exam, examIndex) => {
         const data = buildStudentBarData(student, orderedSubjects, exam.exam_key, windowInfo, examIndex);
         const isLatest = exam.exam_key === windowInfo.to_exam_key;
@@ -295,6 +316,17 @@ function renderStudentSubjectChart(student, windowInfo) {
             }
         };
     });
+
+    // 用底色区分「单列显示」的新增/合并科目区域
+    if (exclusiveSubjects.length && series[0]) {
+        const startCategory = categories[1 + comparableSubjects.length];
+        const endCategory = categories[categories.length - 1];
+        series[0].markArea = {
+            silent: true,
+            itemStyle: { color: 'rgba(148, 163, 184, 0.18)' },
+            data: [[{ xAxis: startCategory }, { xAxis: endCategory }]]
+        };
+    }
 
     chart.setOption({
         tooltip: {
@@ -384,6 +416,48 @@ function getOrderedSubjectNames(names) {
         .filter(subject => !SUBJECT_ORDER.includes(subject))
         .sort((a, b) => String(a).localeCompare(String(b), 'zh-CN'));
     return [...ordered, ...remaining];
+}
+
+// 统计每个科目出现在几次考试中：仅在单次考试出现的视为「新增」或「合并」科目
+function getSubjectCoverage(exams, subjectStats) {
+    const coverage = {};
+    (subjectStats || []).forEach(item => {
+        if (!coverage[item.subject]) {
+            coverage[item.subject] = { examKeys: [], examNames: [] };
+        }
+        const info = coverage[item.subject];
+        if (!info.examKeys.includes(item.exam_key)) {
+            info.examKeys.push(item.exam_key);
+            const exam = (exams || []).find(e => e.exam_key === item.exam_key);
+            info.examNames.push(exam ? exam.exam_name : item.exam_key);
+        }
+    });
+    Object.keys(coverage).forEach(subject => {
+        const info = coverage[subject];
+        info.exclusive = info.examKeys.length < 2;
+        info.examName = info.examNames[0] || '';
+        info.tag = /[、,，]/.test(subject) ? '合并' : '新增';
+    });
+    return coverage;
+}
+
+function isExclusiveSubject(info) {
+    return !!(info && info.exclusive);
+}
+
+function setChartNote(elementId, subjects, coverage, tailText) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    if (!subjects || subjects.length === 0) {
+        el.textContent = '';
+        el.style.display = 'none';
+        return;
+    }
+    const detail = subjects
+        .map(name => `${name}（${coverage[name].examName}${coverage[name].tag}科目）`)
+        .join('，');
+    el.textContent = `注：${detail}——${tailText}`;
+    el.style.display = 'block';
 }
 
 function getOrderedStudentSubjects(student) {
